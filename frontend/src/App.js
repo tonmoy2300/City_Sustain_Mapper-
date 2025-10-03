@@ -901,100 +901,187 @@ const createClusterPolygon = (buildings) => {
   ];
 };
 
-  const renderAirQuality = async () => {
-    if (!leafletMapRef.current) return;
-    startLoading('air', 'Loading air quality');
+// FIXED: renderAirQuality function with proper error handling
+// Replace your existing renderAirQuality function in App.js with this:
+
+const renderAirQuality = async () => {
+  if (!leafletMapRef.current) return;
+  startLoading('air', 'Loading air quality');
+  
+  // Clear existing layer
+  if (airQualityLayerRef.current) {
+    leafletMapRef.current.removeLayer(airQualityLayerRef.current);
+  }
+  airQualityLayerRef.current = window.L.layerGroup().addTo(leafletMapRef.current);
+  
+  const bounds = leafletMapRef.current.getBounds();
+  
+  try {
+    // FIXED: Proper template literal for API URL
+    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
     
-    if (airQualityLayerRef.current) leafletMapRef.current.removeLayer(airQualityLayerRef.current);
-    airQualityLayerRef.current = window.L.layerGroup().addTo(leafletMapRef.current);
+    const response = await fetch(`${API_URL}/api/getAirQuality`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: {
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest()
+        },
+        latitude: (bounds.getNorth() + bounds.getSouth()) / 2,
+        longitude: (bounds.getEast() + bounds.getWest()) / 2
+      })
+    });
     
-    const bounds = leafletMapRef.current.getBounds();
-    
-    try {
-      const response = await fetch('process.env.REACT_APP_API_URL/api/getAirQuality', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bounds: {
-            north: bounds.getNorth(),
-            south: bounds.getSouth(),
-            east: bounds.getEast(),
-            west: bounds.getWest()
-          }
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!data.isReal || data.locations.length === 0) {
-        setDataError(data.note || 'No air quality data available for this area.');
-        stopLoading('air');
-        return;
-      }
-      
-      const aqiPoints = data.locations.map(loc => [
-        loc.latitude, 
-        loc.longitude, 
-        Math.min(loc.aqi / 200, 1)
-      ]).filter(point => point[2] > 0);
-      
-      data.locations.forEach((loc, idx) => {
-        const isStation = loc.sourceType === 'station';
-        const isModel = loc.sourceType === 'model';
-        
-        const marker = window.L.circleMarker([loc.latitude, loc.longitude], {
-          radius: isModel ? 25 : 18,
-          fillColor: isStation ? loc.color : 'transparent',
-          color: loc.color,
-          weight: isModel ? 6 : 5,
-          fillOpacity: isStation ? 1.0 : 0,
-          dashArray: isModel ? '8, 8' : null,
-          zIndexOffset: isModel ? 6000 : 5000
-        }).bindPopup(`
-          <div class="font-sans">
-            ${isModel ? '<div class="bg-yellow-100 border border-yellow-300 p-2 rounded mb-2 text-xs">Model Estimate (No ground stations nearby)</div>' : ''}
-            <b class="text-lg">${loc.name}</b><br>
-            <div class="mt-3 p-3 rounded" style="background-color: ${loc.color}20; border: 2px solid ${loc.color}">
-              <span class="font-bold text-2xl" style="color: ${loc.color}">AQI: ${loc.aqi}</span><br>
-              <span class="text-base font-semibold">${loc.aqiCategory}</span>
-            </div>
-            ${loc.measurements.pm25 ? `<div class="text-sm mt-2"><b>PM2.5:</b> ${loc.measurements.pm25.value.toFixed(1)} µg/m³</div>` : ''}
-            ${loc.measurements.pm10 ? `<div class="text-sm"><b>PM10:</b> ${loc.measurements.pm10.value.toFixed(1)} µg/m³</div>` : ''}
-            <div class="text-xs ${isStation ? 'text-green-600' : 'text-orange-600'} mt-2 font-semibold">
-              ${isStation ? '✓ Ground Station (OpenAQ)' : '⚠ CAMS Model (Open-Meteo)'}
-            </div>
-          </div>
-        `);
-        
-        airQualityLayerRef.current.addLayer(marker);
-        if (idx === 0) marker.openPopup();
-      });
-      
-      if (window.L.heatLayer && aqiPoints.length > 0) {
-        const aqiHeat = window.L.heatLayer(aqiPoints, {
-          radius: 90,
-          blur: 50,
-          maxZoom: 19,
-          max: 1.0,
-          minOpacity: 0.6,
-          gradient: { 
-            0.0: '#22c55e', 
-            0.25: '#84cc16',
-            0.4: '#eab308', 
-            0.6: '#f97316', 
-            0.8: '#dc2626', 
-            1.0: '#7f1d1d' 
-          }
-        });
-        airQualityLayerRef.current.addLayer(aqiHeat);
-      }
-      
-    } catch (error) {
-      setDataError(`Failed to load air quality data: ${error.message}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
     }
     
+    const data = await response.json();
+    
+    console.log('Air quality response:', data);
+    
+    // Handle different failure scenarios with specific messages
+    if (!data.isReal) {
+      if (data.note) {
+        setDataError(`Air Quality: ${data.note}`);
+      } else {
+        setDataError('Air quality data unavailable. No monitoring stations or model data accessible for this location.');
+      }
+      stopLoading('air');
+      return;
+    }
+    
+    if (data.locations.length === 0) {
+      setDataError('No air quality monitoring stations found in this area. Try zooming out or searching a major city.');
+      stopLoading('air');
+      return;
+    }
+    
+    console.log(`✓ Rendering ${data.locations.length} air quality points`);
+    
+    // Prepare heatmap data
+    const aqiPoints = data.locations.map(loc => [
+      loc.latitude, 
+      loc.longitude, 
+      Math.min(loc.aqi / 200, 1)
+    ]).filter(point => point[2] > 0);
+    
+    // Render each monitoring station
+    data.locations.forEach((loc, idx) => {
+      const isStation = loc.sourceType === 'station';
+      const isModel = loc.sourceType === 'model';
+      
+      // Create marker with different styles for station vs model
+      const marker = window.L.circleMarker([loc.latitude, loc.longitude], {
+        radius: isModel ? 30 : 20,
+        fillColor: isStation ? loc.color : 'transparent',
+        color: loc.color,
+        weight: isModel ? 7 : 6,
+        fillOpacity: isStation ? 0.9 : 0,
+        dashArray: isModel ? '10, 10' : null,
+        zIndexOffset: isModel ? 6000 : 5000
+      });
+      
+      // Enhanced popup with all available data
+      const measurements = Object.entries(loc.measurements)
+        .map(([param, data]) => {
+          const paramLabels = {
+            pm25: 'PM2.5',
+            pm10: 'PM10',
+            no2: 'NO₂',
+            o3: 'O₃',
+            so2: 'SO₂',
+            co: 'CO'
+          };
+          return `<div class="text-sm"><b>${paramLabels[param] || param}:</b> ${data.value.toFixed(1)} ${data.unit}</div>`;
+        })
+        .join('');
+      
+      const lastUpdate = loc.measurements.pm25?.lastUpdated 
+        ? new Date(loc.measurements.pm25.lastUpdated).toLocaleString() 
+        : 'N/A';
+      
+      marker.bindPopup(`
+        <div class="font-sans p-2">
+          ${isModel ? `
+            <div class="bg-yellow-100 border border-yellow-400 p-2 rounded mb-3 text-xs flex items-start space-x-2">
+              <span class="text-yellow-700">⚠️</span>
+              <div>
+                <div class="font-semibold text-yellow-900">Model Estimate</div>
+                <div class="text-yellow-700">No ground monitoring stations nearby. Showing atmospheric model data from CAMS.</div>
+              </div>
+            </div>
+          ` : ''}
+          
+          <div class="mb-3">
+            <b class="text-lg block">${loc.name}</b>
+            <div class="text-xs text-slate-500 mt-1">
+              ${loc.latitude.toFixed(4)}°N, ${loc.longitude.toFixed(4)}°E
+            </div>
+          </div>
+          
+          <div class="p-4 rounded-lg mb-3" style="background-color: ${loc.color}20; border: 3px solid ${loc.color}">
+            <div class="text-center">
+              <span class="font-bold text-3xl block" style="color: ${loc.color}">AQI ${loc.aqi}</span>
+              <span class="text-base font-semibold text-slate-800 mt-1 block">${loc.aqiCategory}</span>
+            </div>
+          </div>
+          
+          <div class="space-y-1 mb-3">
+            ${measurements}
+          </div>
+          
+          <div class="text-xs mt-3 pt-2 border-t ${isStation ? 'text-green-700' : 'text-orange-700'}">
+            <div class="font-semibold flex items-center space-x-1">
+              <span>${isStation ? '✓' : '⚠'}</span>
+              <span>${isStation ? 'Ground Station (OpenAQ)' : 'CAMS Model (Open-Meteo)'}</span>
+            </div>
+            <div class="text-slate-500 mt-1">Last updated: ${lastUpdate}</div>
+          </div>
+        </div>
+      `);
+      
+      airQualityLayerRef.current.addLayer(marker);
+      
+      // Auto-open first marker
+      if (idx === 0) {
+        marker.openPopup();
+      }
+    });
+    
+    // Add heatmap overlay if we have multiple points
+    if (window.L.heatLayer && aqiPoints.length > 1) {
+      const aqiHeat = window.L.heatLayer(aqiPoints, {
+        radius: 90,
+        blur: 50,
+        maxZoom: 19,
+        max: 1.0,
+        minOpacity: 0.5,
+        gradient: { 
+          0.0: '#22c55e',   // Good - Green
+          0.25: '#84cc16',  // Moderate - Yellow-green
+          0.4: '#eab308',   // Unhealthy for sensitive - Yellow
+          0.6: '#f97316',   // Unhealthy - Orange
+          0.8: '#dc2626',   // Very unhealthy - Red
+          1.0: '#7f1d1d'    // Hazardous - Dark red
+        }
+      });
+      airQualityLayerRef.current.addLayer(aqiHeat);
+    }
+    
+    console.log(`✓ Air quality layer rendered successfully`);
+    
+  } catch (error) {
+    console.error('Air quality fetch error:', error);
+    setDataError(`Failed to load air quality: ${error.message}. Check that your backend server is running.`);
+  } finally {
     stopLoading('air');
-  };
+  }
+};
 
   const renderGreenSpaces = (buildingsData) => {
     if (!leafletMapRef.current) return;

@@ -60,7 +60,7 @@ const NASA_POWER_PARAMS = {
   format: 'JSON'
 };
 
-const OPENAQ_API_KEY = '0f9fab0602c84f99f01a0bc7245318e6ccd88bffeb1a0c3259d1599dac3bef22';
+const OPENAQ_API_KEY = '315d6ce5ea7776db705d50e70fc0d9f2bc5deac47a9c87f55c3529323a0a0c3f';
 const OPENAQ_BASE_URL = 'https://api.openaq.org/v3';
 
 // MAIN ROOF DATA ENDPOINT
@@ -307,54 +307,69 @@ app.post('/api/getRainfallForecast', async (req, res) => {
   }
 });
 
-// AIR QUALITY ENDPOINT
+// FIXED: Air Quality endpoint with proper OpenAQ v3 implementation
+// Replace your existing /api/getAirQuality endpoint in server.js with this:
+
+// AIR QUALITY ENDPOINT - FIXED VERSION
 app.post('/api/getAirQuality', async (req, res) => {
   try {
     const { bounds, latitude, longitude } = req.body;
 
-    console.log('Fetching air quality data...');
+    console.log('=== AIR QUALITY REQUEST ===');
+    console.log('Bounds:', bounds);
+    console.log('Center:', latitude, longitude);
 
     const centerLat = bounds ? (bounds.north + bounds.south) / 2 : latitude;
     const centerLng = bounds ? (bounds.east + bounds.west) / 2 : longitude;
 
     if (!centerLat || !centerLng) {
-      return res.status(400).json({ error: 'Provide bounds or coordinates' });
+      return res.status(400).json({ 
+        error: 'Must provide either bounds or coordinates',
+        isReal: false 
+      });
     }
 
+    // Check cache first
     const cacheKey = getCacheKey('airquality', centerLat, centerLng);
     const cached = getFromCache(cacheKey);
     if (cached) {
+      console.log('✓ Returning cached air quality data');
       return res.json(cached);
     }
 
+    // Try OpenAQ ground stations first
+    console.log('Attempting OpenAQ ground stations...');
     const stationData = await fetchOpenAQStations(bounds, centerLat, centerLng);
 
-    if (stationData.locations.length > 0) {
-      console.log(`Returning ${stationData.locations.length} ground stations from OpenAQ`);
+    if (stationData.locations && stationData.locations.length > 0) {
+      console.log(`✓ SUCCESS: ${stationData.locations.length} ground stations from OpenAQ`);
       setCache(cacheKey, stationData);
       return res.json(stationData);
     }
 
-    console.log('No OpenAQ stations found. Falling back to CAMS model...');
+    // Fallback to CAMS model if no stations found
+    console.log('No OpenAQ stations found. Trying CAMS model...');
     const modelData = await fetchModelAirQuality(centerLat, centerLng);
 
     if (modelData.isReal) {
-      console.log('Returning model estimate from Open-Meteo (CAMS)');
+      console.log('✓ SUCCESS: Model estimate from Open-Meteo (CAMS)');
       setCache(cacheKey, modelData);
       return res.json(modelData);
     }
 
+    // Both failed - return error
+    console.log('✗ FAILED: No data from OpenAQ or CAMS');
     return res.json({
       locations: [],
       count: 0,
       source: 'None',
       isReal: false,
-      note: 'No air quality data available. Neither ground stations (OpenAQ) nor model data (CAMS) are accessible for this location.',
+      note: 'No air quality data available. Neither ground monitoring stations (OpenAQ) nor atmospheric model data (CAMS) are accessible for this location.',
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Error in getAirQuality:', error.message);
+    console.error('✗ Air quality endpoint error:', error.message);
     res.status(503).json({
       locations: [],
       count: 0,
@@ -365,74 +380,169 @@ app.post('/api/getAirQuality', async (req, res) => {
   }
 });
 
-// Fetch OpenAQ v3 ground stations
+// UPDATED: OpenAQ v3 with correct endpoint and parameters
+// Replace the fetchOpenAQStations function in your server.js
+
 async function fetchOpenAQStations(bounds, centerLat, centerLng) {
   try {
+    console.log('\n=== FETCHING OPENAQ STATIONS ===');
+    
+    // Build request parameters
     let params = {
       limit: 100,
-      'parameters_id': 2,
+      'order_by': 'datetime',
+      'sort_order': 'desc'
     };
 
+    // Spatial filtering
     if (bounds) {
-      params.bbox = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`;
-      console.log('OpenAQ bbox:', params.bbox);
+      // OpenAQ v3 uses: west,south,east,north
+      const bboxString = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`;
+      params.bbox = bboxString;
+      console.log(`Using bbox: ${bboxString}`);
     } else {
       params.coordinates = `${centerLat},${centerLng}`;
-      params.radius = 25000;
-      console.log('OpenAQ coordinates:', params.coordinates);
+      params.radius = 50000; // 50km
+      console.log(`Using coordinates: ${params.coordinates}, radius: ${params.radius}m`);
     }
 
-    const response = await axios.get(`${OPENAQ_BASE_URL}/latest`, {
+    console.log('Full OpenAQ request params:', JSON.stringify(params, null, 2));
+
+    await throttleRequest();
+
+    const url = `${OPENAQ_BASE_URL}/latest`;
+    console.log(`Requesting: ${url}`);
+
+    const response = await axios.get(url, {
       headers: {
         'X-API-Key': OPENAQ_API_KEY,
         'Accept': 'application/json'
       },
       params,
-      timeout: 15000
+      timeout: 20000
     });
 
-    const results = response.data.results || [];
-    console.log(`OpenAQ returned ${results.length} measurements`);
+    console.log('OpenAQ Response Status:', response.status);
+    console.log('OpenAQ Response Headers:', response.headers);
 
-    if (results.length === 0) {
+    if (!response.data) {
+      console.log('❌ No data in response');
       return { locations: [], count: 0 };
     }
 
+    const meta = response.data.meta;
+    const results = response.data.results || [];
+    
+    console.log(`OpenAQ Meta:`, JSON.stringify(meta, null, 2));
+    console.log(`OpenAQ returned ${results.length} measurements`);
+
+    if (results.length === 0) {
+      console.log('❌ Zero results from OpenAQ');
+      console.log('This could mean:');
+      console.log('  1. No stations in this area');
+      console.log('  2. API rate limit reached');
+      console.log('  3. Invalid bbox/coordinates');
+      return { locations: [], count: 0 };
+    }
+
+    // Log first result for debugging
+    if (results.length > 0) {
+      console.log('First measurement sample:', JSON.stringify(results[0], null, 2));
+    }
+
+    // Group measurements by location
     const locationMap = new Map();
 
-    results.forEach(measurement => {
-      const locId = measurement.location?.id || measurement.locationId;
-      const locName = measurement.location?.name || measurement.location || `Station ${locId}`;
-      const lat = measurement.coordinates?.latitude;
-      const lng = measurement.coordinates?.longitude;
+    results.forEach((measurement, idx) => {
+      try {
+        // Extract location information
+        const locId = measurement.locationId || measurement.location?.id;
+        const locName = measurement.location?.name || 
+                       measurement.locationName || 
+                       `Station ${locId}`;
+        
+        const coords = measurement.coordinates;
+        const lat = coords?.latitude;
+        const lng = coords?.longitude;
 
-      if (!locId || !lat || !lng) return;
+        // Validate required fields
+        if (!locId || lat == null || lng == null) {
+          console.log(`Skipping measurement ${idx}: missing location data`);
+          return;
+        }
 
-      if (!locationMap.has(locId)) {
-        locationMap.set(locId, {
-          id: locId,
-          name: locName,
-          latitude: lat,
-          longitude: lng,
-          measurements: {},
-          sourceType: 'station'
-        });
-      }
+        // Initialize location entry
+        if (!locationMap.has(locId)) {
+          locationMap.set(locId, {
+            id: locId,
+            name: locName,
+            latitude: lat,
+            longitude: lng,
+            measurements: {},
+            sourceType: 'station',
+            lastUpdate: null
+          });
+        }
 
-      const loc = locationMap.get(locId);
-      const paramName = measurement.parameter?.name || measurement.parameter;
+        const loc = locationMap.get(locId);
 
-      if (paramName) {
-        loc.measurements[paramName] = {
-          value: measurement.value,
-          unit: measurement.parameter?.units || 'µg/m³',
-          lastUpdated: measurement.date?.utc || measurement.datetime?.utc
+        // Extract parameter info
+        const param = measurement.parameter;
+        const paramId = param?.id;
+        const paramName = param?.name?.toLowerCase() || '';
+        const paramUnits = param?.units || 'µg/m³';
+        const value = measurement.value;
+        const datetime = measurement.date?.utc || 
+                        measurement.datetime?.utc || 
+                        new Date().toISOString();
+
+        // Map parameter names to standard keys
+        const paramMapping = {
+          'pm25': 'pm25',
+          'pm2.5': 'pm25',
+          'pm10': 'pm10',
+          'no2': 'no2',
+          'nitrogen dioxide': 'no2',
+          'o3': 'o3',
+          'ozone': 'o3',
+          'so2': 'so2',
+          'sulfur dioxide': 'so2',
+          'co': 'co',
+          'carbon monoxide': 'co'
         };
+
+        const standardParam = paramMapping[paramName] || paramName;
+
+        if (value != null && standardParam) {
+          loc.measurements[standardParam] = {
+            value: value,
+            unit: paramUnits,
+            lastUpdated: datetime
+          };
+
+          // Track latest update time
+          if (!loc.lastUpdate || datetime > loc.lastUpdate) {
+            loc.lastUpdate = datetime;
+          }
+        }
+
+      } catch (err) {
+        console.error(`Error processing measurement ${idx}:`, err.message);
       }
     });
 
-    const airQualityData = Array.from(locationMap.values())
-      .filter(loc => loc.measurements.pm25)
+    console.log(`Grouped into ${locationMap.size} unique locations`);
+
+    // Convert to array and filter
+    const locations = Array.from(locationMap.values())
+      .filter(loc => {
+        // Must have at least PM2.5
+        const hasPM25 = loc.measurements.pm25;
+        if (!hasPM25) {
+          console.log(`Filtering out ${loc.name}: no PM2.5 data`);
+        }
+        return hasPM25;
+      })
       .map(loc => {
         const pm25Value = loc.measurements.pm25.value;
         const aqi = calculateAQI(pm25Value);
@@ -444,61 +554,90 @@ async function fetchOpenAQStations(bounds, centerLat, centerLng) {
           color: getAQIColor(aqi)
         };
       })
-      .sort((a, b) => b.aqi - a.aqi);
+      .sort((a, b) => b.aqi - a.aqi)
+      .slice(0, 50);
+
+    console.log(`✅ Final result: ${locations.length} valid stations with PM2.5`);
+    
+    if (locations.length > 0) {
+      console.log('Sample station:', {
+        name: locations[0].name,
+        aqi: locations[0].aqi,
+        measurements: Object.keys(locations[0].measurements)
+      });
+    }
 
     return {
-      locations: airQualityData.slice(0, 50),
-      count: airQualityData.length,
-      source: 'Ground stations (OpenAQ v3)',
+      locations: locations,
+      count: locations.length,
+      source: 'Ground monitoring stations (OpenAQ v3)',
       isReal: true,
       timestamp: new Date().toISOString()
     };
 
   } catch (error) {
-    console.error('OpenAQ error:', error.message);
+    console.error('\n❌ OpenAQ ERROR ===');
+    console.error('Error message:', error.message);
+    
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      
+      if (error.response.status === 401) {
+        console.error('⚠️  API KEY INVALID - Get new key from https://explore.openaq.org/');
+      } else if (error.response.status === 429) {
+        console.error('⚠️  RATE LIMIT EXCEEDED - Wait 1 hour or upgrade plan');
+      }
+    } else if (error.code === 'ECONNREFUSED') {
+      console.error('⚠️  Cannot connect to OpenAQ API');
+    }
+    
     return { locations: [], count: 0 };
   }
 }
 
-// Fetch model air quality from Open-Meteo
+// FIXED: Model air quality with better error handling
 async function fetchModelAirQuality(latitude, longitude) {
   try {
-    console.log(`Fetching CAMS model data for ${latitude}, ${longitude}`);
+    console.log(`Fetching CAMS model data for ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
 
     await throttleRequest();
 
     const response = await axios.get('https://air-quality-api.open-meteo.com/v1/air-quality', {
       params: {
-        latitude,
-        longitude,
-        current: 'pm10,pm2_5,nitrogen_dioxide,ozone,us_aqi',
+        latitude: latitude.toFixed(4),
+        longitude: longitude.toFixed(4),
+        current: 'pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,us_aqi',
         timezone: 'auto'
       },
       timeout: 10000
     });
 
-    const data = response.data;
-
-    if (!data.current) {
+    if (!response.data || !response.data.current) {
+      console.log('CAMS API returned invalid structure');
       return { isReal: false };
     }
 
-    const pm25 = data.current.pm2_5;
-    const pm10 = data.current.pm10;
-    const no2 = data.current.nitrogen_dioxide;
-    const o3 = data.current.ozone;
-    const modelAQI = data.current.us_aqi || calculateAQI(pm25);
+    const current = response.data.current;
+
+    // Extract pollutants
+    const pm25 = current.pm2_5;
+    const pm10 = current.pm10;
+    const no2 = current.nitrogen_dioxide;
+    const o3 = current.ozone;
+    const so2 = current.sulphur_dioxide;
+    const co = current.carbon_monoxide;
+
+    // Calculate or use provided AQI
+    const modelAQI = current.us_aqi || calculateAQI(pm25);
 
     const location = {
-      id: 'model_estimate',
-      name: 'Model Estimate (CAMS)',
+      id: 'cams_model',
+      name: 'CAMS Model Estimate',
       latitude,
       longitude,
       measurements: {
-        pm25: { value: pm25, unit: 'µg/m³', lastUpdated: new Date().toISOString() },
-        ...(pm10 && { pm10: { value: pm10, unit: 'µg/m³' } }),
-        ...(no2 && { no2: { value: no2, unit: 'µg/m³' } }),
-        ...(o3 && { o3: { value: o3, unit: 'µg/m³' } })
+        pm25: { value: pm25, unit: 'µg/m³', lastUpdated: new Date().toISOString() }
       },
       aqi: modelAQI,
       aqiCategory: getAQICategory(modelAQI),
@@ -506,22 +645,33 @@ async function fetchModelAirQuality(latitude, longitude) {
       sourceType: 'model'
     };
 
+    // Add other pollutants if available
+    if (pm10 != null) location.measurements.pm10 = { value: pm10, unit: 'µg/m³' };
+    if (no2 != null) location.measurements.no2 = { value: no2, unit: 'µg/m³' };
+    if (o3 != null) location.measurements.o3 = { value: o3, unit: 'µg/m³' };
+    if (so2 != null) location.measurements.so2 = { value: so2, unit: 'µg/m³' };
+    if (co != null) location.measurements.co = { value: co, unit: 'µg/m³' };
+
+    console.log(`✓ CAMS model returned AQI ${modelAQI}`);
+
     return {
       locations: [location],
       count: 1,
-      source: 'CAMS Model (Open-Meteo)',
+      source: 'CAMS Atmospheric Model (Open-Meteo)',
       isReal: true,
-      note: 'No ground stations nearby. Showing atmospheric model estimate.',
+      note: 'No ground monitoring stations found nearby. Showing atmospheric model estimate from Copernicus Atmosphere Monitoring Service (CAMS).',
       timestamp: new Date().toISOString()
     };
 
   } catch (error) {
-    console.error('Model API error:', error.message);
+    console.error('CAMS model API error:', error.message);
+    if (error.response) {
+      console.error('Status:', error.response.status);
+    }
     return { isReal: false };
   }
 }
 
-// HELPER FUNCTIONS
 
 // Fetch solar data from NASA POWER with caching
 async function fetchSolarData(latitude, longitude) {
