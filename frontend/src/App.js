@@ -645,7 +645,7 @@ const RoofHarvestApp = () => {
     if (cached) return cached;
 
     try {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+      const API_URL = process.env.REACT_APP_API_URL;
       const response = await fetch(`${API_URL}/api/getRoofData`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -911,7 +911,7 @@ const createClusterPolygon = (buildings) => {
     const bounds = leafletMapRef.current.getBounds();
     
     try {
-      const response = await fetch('http://localhost:3001/api/getAirQuality', {
+      const response = await fetch('process.env.REACT_APP_API_URL/api/getAirQuality', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1063,7 +1063,7 @@ const createClusterPolygon = (buildings) => {
     setDataError(null);
     
     try {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+      const API_URL = process.env.REACT_APP_API_URL;
       const response = await fetch(`${API_URL}/api/getRoofData`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1138,7 +1138,7 @@ const createClusterPolygon = (buildings) => {
       setRoofData(analysis);
     } catch (error) {
       console.error('Network error:', error);
-      setDataError(`Network error: ${error.message}. Make sure the server is running on http://localhost:3001`);
+      setDataError(`Network error: ${error.message}. Make sure the server is running on process.env.REACT_APP_API_URL`);
       setRoofData(null);
     } finally {
       stopLoading('analysis');
