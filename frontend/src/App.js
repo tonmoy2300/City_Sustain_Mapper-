@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MapPin, Droplet, Sun, Download, Loader2, Building2, Search, X, Layers, Thermometer, CloudRain, Wind, Info, ChevronRight, Leaf, AlertCircle, FileText, ChevronUp, AlertTriangle } from 'lucide-react';
-
+import { MapPin, Droplet, Sun, Download, Loader2, Building2, Search, X, Layers, Thermometer, CloudRain, Wind, Info, ChevronRight, Leaf, AlertCircle, FileText, ChevronUp, AlertTriangle, Maximize2 } from 'lucide-react';
+import Building3DVisualization from './components/Building3DVisualization';
 // Unified Loading Manager Component
 const LoadingManager = ({ operations }) => {
   const activeOps = Object.entries(operations).filter(([_, data]) => data.active);
@@ -273,6 +273,7 @@ const RoofHarvestApp = () => {
   const [buildings, setBuildings] = useState([]);
   const [activeInfo, setActiveInfo] = useState(null);
   const [dataError, setDataError] = useState(null);
+  const [show3DView, setShow3DView] = useState(false);
   const [activeLayers, setActiveLayers] = useState({
     buildings: true,
     heat: false,
@@ -1364,6 +1365,15 @@ ${!roofData.water.error ? '✓ Implement rainwater harvesting system' : '⚠ Pre
                 {roofData && <p className="text-xs text-slate-500 mt-1">{roofData.dataSource}</p>}
               </div>
               <div className="flex items-center space-x-2">
+              {roofData && (
+                  <button 
+                    onClick={() => setShow3DView(true)} 
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all flex items-center space-x-2 shadow-lg"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    <span>3D View</span>
+                  </button>
+                )}
                 {roofData && (
                   <button onClick={downloadReport} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-all flex items-center space-x-2">
                     <Download className="w-4 h-4" /><span>Report</span>
@@ -1413,6 +1423,13 @@ ${!roofData.water.error ? '✓ Implement rainwater harvesting system' : '⚠ Pre
             )}
           </div>
         )}
+        {show3DView && selectedBuilding && roofData && (
+  <Building3DVisualization
+    building={selectedBuilding}
+    roofData={roofData}
+    onClose={() => setShow3DView(false)}
+  />
+)}
       </div>
     </div>
   );
