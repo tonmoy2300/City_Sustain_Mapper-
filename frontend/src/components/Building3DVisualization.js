@@ -21,8 +21,8 @@ const Building3DVisualization = ({ building, roofData, onClose }) => {
     
     // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf1f5f9);
-    scene.fog = new THREE.Fog(0xf1f5f9, 10, 50);
+    scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+    scene.fog = new THREE.Fog(0x87ceeb, 30, 100);
     sceneRef.current = scene;
 
     // Camera setup
@@ -112,9 +112,9 @@ const Building3DVisualization = ({ building, roofData, onClose }) => {
       geometry.rotateX(Math.PI / 2);
       
       const buildingMaterial = new THREE.MeshStandardMaterial({
-        color: 0x64748b,
-        roughness: 0.7,
-        metalness: 0.3
+        color: 0xe5e7eb, // Light gray - modern building
+        roughness: 0.8,
+        metalness: 0.2
       });
       
       const buildingMesh = new THREE.Mesh(geometry, buildingMaterial);
@@ -128,11 +128,11 @@ const Building3DVisualization = ({ building, roofData, onClose }) => {
       roofGeometry.rotateX(Math.PI / 2);
       
       const roofMaterial = new THREE.MeshStandardMaterial({
-        color: showSolarPanels ? 0x1e3a8a : 0x94a3b8,
-        roughness: 0.3,
-        metalness: 0.7,
-        emissive: showSolarPanels ? 0x3b82f6 : 0x000000,
-        emissiveIntensity: 0.2
+        color: showSolarPanels ? 0x0ea5e9 : 0xd1d5db, // Bright blue when solar panels active
+        roughness: 0.2,
+        metalness: 0.8,
+        emissive: showSolarPanels ? 0x0284c7 : 0x000000,
+        emissiveIntensity: showSolarPanels ? 0.4 : 0
       });
       
       const roof = new THREE.Mesh(roofGeometry, roofMaterial);
@@ -140,58 +140,78 @@ const Building3DVisualization = ({ building, roofData, onClose }) => {
       roof.receiveShadow = true;
       scene.add(roof);
 
-      // Add solar panels grid
+      // Add solar panels grid - MUCH BIGGER AND MORE VISIBLE
       if (showSolarPanels && roofData) {
         const panelCount = Math.floor(building.area / 2);
         const panelsPerRow = Math.ceil(Math.sqrt(panelCount));
         
         for (let i = 0; i < Math.min(panelCount, 100); i++) {
-          const panelGeometry = new THREE.BoxGeometry(0.3, 0.02, 0.5);
+          const panelGeometry = new THREE.BoxGeometry(0.8, 0.06, 1.2); // BIGGER panels
           const panelMaterial = new THREE.MeshStandardMaterial({
-            color: 0x1e40af,
-            roughness: 0.2,
-            metalness: 0.8,
+            color: 0x1e293b, // Dark blue/black - realistic solar panel color
+            roughness: 0.3,
+            metalness: 0.9,
             emissive: 0x3b82f6,
-            emissiveIntensity: 0.3
+            emissiveIntensity: 0.5 // Brighter glow
           });
           
           const panel = new THREE.Mesh(panelGeometry, panelMaterial);
           const row = Math.floor(i / panelsPerRow);
           const col = i % panelsPerRow;
           
-          panel.position.x = (col - panelsPerRow / 2) * 0.4;
-          panel.position.z = (row - panelsPerRow / 2) * 0.6;
-          panel.position.y = buildingHeight + 0.15;
-          panel.rotation.x = -Math.PI / 8;
+          panel.position.x = (col - panelsPerRow / 2) * 1.0; // More spacing
+          panel.position.z = (row - panelsPerRow / 2) * 1.4; // More spacing
+          panel.position.y = buildingHeight + 0.25; // Higher above roof
+          panel.rotation.x = -Math.PI / 6; // Better angle for visibility
+          panel.castShadow = true;
           
           scene.add(panel);
         }
       }
 
-      // Add energy visualization particles
+      // Add energy visualization particles - MORE PROMINENT
       if (roofData && showSolarPanels) {
         const particlesGeometry = new THREE.BufferGeometry();
-        const particleCount = 200;
+        const particleCount = 300; // More particles
         const positions = new Float32Array(particleCount * 3);
         
         for (let i = 0; i < particleCount; i++) {
-          positions[i * 3] = (Math.random() - 0.5) * 10;
-          positions[i * 3 + 1] = buildingHeight + Math.random() * 5;
-          positions[i * 3 + 2] = (Math.random() - 0.5) * 10;
+          positions[i * 3] = (Math.random() - 0.5) * 12;
+          positions[i * 3 + 1] = buildingHeight + 1 + Math.random() * 8; // Higher particles
+          positions[i * 3 + 2] = (Math.random() - 0.5) * 12;
         }
         
         particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         
         const particlesMaterial = new THREE.PointsMaterial({
-          color: 0xfbbf24,
-          size: 0.1,
+          color: 0xfbbf24, // Bright yellow/gold
+          size: 0.3, // Bigger particles
           transparent: true,
-          opacity: 0.6,
+          opacity: 0.8, // More visible
           blending: THREE.AdditiveBlending
         });
         
         const particles = new THREE.Points(particlesGeometry, particlesMaterial);
         scene.add(particles);
+        
+        // Add animated sun rays
+        const rayGeometry = new THREE.ConeGeometry(0.2, 4, 8);
+        const rayMaterial = new THREE.MeshBasicMaterial({
+          color: 0xfde047,
+          transparent: true,
+          opacity: 0.6
+        });
+        
+        for (let i = 0; i < 5; i++) {
+          const ray = new THREE.Mesh(rayGeometry, rayMaterial);
+          ray.position.set(
+            (Math.random() - 0.5) * 8,
+            buildingHeight + 8,
+            (Math.random() - 0.5) * 8
+          );
+          ray.rotation.z = Math.PI;
+          scene.add(ray);
+        }
       }
     }
 
@@ -367,9 +387,24 @@ const Building3DVisualization = ({ building, roofData, onClose }) => {
         </div>
 
         {/* Info */}
-        <div className="mt-3 pt-3 border-t border-slate-200">
-          <p className="text-xs text-slate-600">
-            🎮 <strong>Tip:</strong> Drag to rotate • Scroll to zoom • Toggle controls to see different visualizations
+        <div className="mt-3 pt-3 border-t border-slate-200 bg-blue-50 rounded-lg p-3">
+          <h4 className="font-bold text-sm text-blue-900 mb-2">📘 What You're Seeing:</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-blue-800">
+            <div className="flex items-start space-x-2">
+              <span className="font-bold">🏢</span>
+              <span><strong>Gray Building:</strong> Real 3D shape from OpenStreetMap data</span>
+            </div>
+            <div className="flex items-start space-x-2">
+              <span className="font-bold">⚡</span>
+              <span><strong>Dark Blue Panels:</strong> Solar PV modules positioned on rooftop</span>
+            </div>
+            <div className="flex items-start space-x-2">
+              <span className="font-bold">✨</span>
+              <span><strong>Gold Particles:</strong> Energy generation visualization from NASA data</span>
+            </div>
+          </div>
+          <p className="text-xs text-blue-700 mt-2">
+            🎮 <strong>Interaction:</strong> Drag to rotate • Scroll to zoom • Toggle controls to see different layers
           </p>
         </div>
       </div>
